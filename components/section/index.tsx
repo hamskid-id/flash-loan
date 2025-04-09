@@ -1,12 +1,16 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { BrowserProvider, Contract, 
-    // Signer, 
-    ethers } from 'ethers'
+import {
+  BrowserProvider,
+  Contract,
+  // Signer,
+  ethers,
+} from 'ethers'
 import { Button } from '../ui/button'
 import { longTradeABI, shortTradeABI } from '@/lib/constants'
 import { toast } from 'sonner'
+import { BSC_MAINNET_CONFIG } from '@/lib/bscConfig'
 
 declare global {
   interface Window {
@@ -22,8 +26,8 @@ const longTradeAddress = '0xe76aa7e39763e6fa260e13a24c6d76a8abf4305b'
 const shortTradeAddress = '0x92158730bee648250e0a10e44fef3661b8d2e2b8'
 
 export default function Home() {
-//   const [provider, setProvider] = useState<BrowserProvider | null>(null)
-//   const [signer, setSigner] = useState<Signer | null>(null)
+  //   const [provider, setProvider] = useState<BrowserProvider | null>(null)
+  //   const [signer, setSigner] = useState<Signer | null>(null)
   const [longTradeContract, setLongTradeContract] = useState<Contract | null>(
     null
   )
@@ -40,16 +44,37 @@ export default function Home() {
   const connectWallet = async () => {
     if (window.ethereum) {
       try {
-        await window.ethereum.request({ method: 'eth_requestAccounts' })
+        // Check current network
+        const chainId = await window.ethereum.request({ method: 'eth_chainId' })
+
+        // Switch to BSC if not already connected
+        if (chainId !== BSC_MAINNET_CONFIG.chainId) {
+          try {
+            await window.ethereum.request({
+              method: 'wallet_switchEthereumChain',
+              params: [{ chainId: BSC_MAINNET_CONFIG.chainId }],
+            })
+          } catch (switchError) {
+            const err = switchError as EthereumRpcError
+            // This error code indicates the chain hasn't been added to MetaMask
+            if (err.code === 4902) {
+              await window.ethereum.request({
+                method: 'wallet_addEthereumChain',
+                params: [BSC_MAINNET_CONFIG],
+              })
+            } else {
+              throw switchError
+            }
+          }
+        }
+
+        const accounts = await window.ethereum.request({
+          method: 'eth_requestAccounts',
+        })
+
         const web3Provider = new BrowserProvider(window.ethereum)
-        // console.log('Provider', web3Provider)
-        // setProvider(web3Provider)
-
         const web3Signer = await web3Provider.getSigner()
-        // console.log('Signer', web3Signer)
-        // setSigner(web3Signer)
 
-        // Initialize contracts
         const longTrade = new Contract(
           longTradeAddress,
           longTradeABI,
@@ -65,13 +90,21 @@ export default function Home() {
         setShortTradeContract(shortTrade)
         setIsConnected(true)
 
-        toast.success('Wallet connected successfully')
+        toast.success('Wallet connected to BSC successfully')
       } catch (error) {
-        toast.error(
-          `Error connecting wallet: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        )
+        const err = error as EthereumRpcError
+        let errorMessage = 'Error connecting wallet'
+
+        if (err.code === 4001) {
+          errorMessage = 'Please connect to Binance Smart Chain'
+        } else if (
+          err?.message &&
+          err?.message.includes('user rejected request')
+        ) {
+          errorMessage = 'Connection rejected by user'
+        }
+
+        toast.error(errorMessage)
       }
     } else {
       toast.error('MetaMask not detected. Please install MetaMask.')
@@ -81,19 +114,26 @@ export default function Home() {
   // Execute both contracts
   const executeContracts = async () => {
     if (!longTradeContract || !shortTradeContract) {
+      toast.dismiss()
       toast.error('Contracts not initialized. Please connect wallet first.')
       return
     }
 
     try {
-      // Execute both contracts simultaneously
       setIsRunning(true)
-      const tx1 = longTradeContract.initiateFlashLoan()
-      const tx2 = shortTradeContract.initiateFlashLoan()
+
+      // BSC typically uses lower gas prices than Ethereum
+      const txOptions = {
+        gasPrice: ethers.parseUnits('5', 'gwei'), // 5 Gwei is typical for BSC
+        gasLimit: 500000, // Adjust based on your contract's needs
+      }
+
+      const tx1 = longTradeContract.initiateFlashLoan(txOptions)
+      const tx2 = shortTradeContract.initiateFlashLoan(txOptions)
 
       await Promise.all([tx1, tx2])
       toast.dismiss()
-      toast.success('Flash loans initiated successfully!')
+      toast.success('Flash loans initiated successfully on BSC!')
       addLog('Flash loans initiated successfully!')
     } catch (error) {
       toast.dismiss()
@@ -128,6 +168,8 @@ export default function Home() {
 
       toast.error(userMessage)
       addLog(userMessage)
+      setIsRunning(false)
+    } finally {
       setIsRunning(false)
     }
   }
@@ -170,9 +212,9 @@ export default function Home() {
 
   // Add log message
   const addLog = (message: string) => {
-    const timestamp = new Date().toLocaleTimeString();
-    setLogs(prev => [...prev, `${timestamp}: ${message}`]);
-  };
+    const timestamp = new Date().toLocaleTimeString()
+    setLogs((prev) => [...prev, `${timestamp}: ${message}`])
+  }
 
   // Helper function to sanitize technical error messages
   const sanitizeErrorMessage = (message: string): string => {
