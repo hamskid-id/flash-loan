@@ -68,7 +68,7 @@ export default function Home() {
           }
         }
 
-        const accounts = await window.ethereum.request({
+        await window.ethereum.request({
           method: 'eth_requestAccounts',
         })
 
