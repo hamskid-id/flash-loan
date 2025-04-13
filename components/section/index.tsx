@@ -92,6 +92,7 @@ export default function Home() {
 
         toast.success('Wallet connected to BSC successfully')
       } catch (error) {
+        console.log("Error",error)
         const err = error as EthereumRpcError
         let errorMessage = 'Error connecting wallet'
 
