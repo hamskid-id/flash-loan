@@ -14,8 +14,8 @@ import { BSC_MAINNET_CONFIG } from '@/lib/bscConfig'
 declare global {
   interface Window {
     ethereum?: ethers.Eip1193Provider & {
-      on: (event: string, callback: (...args: any[]) => void) => void;
-      removeListener: (event: string, callback: (...args: any[]) => void) => void;
+      on: (event: string, callback: (...args: any[]) => void) => void; /* eslint-disable @typescript-eslint/no-explicit-any */
+      removeListener: (event: string, callback: (...args: any[]) => void) => void; /* eslint-disable @typescript-eslint/no-explicit-any */
     };
   }
   interface EthereumRpcError extends Error {
@@ -71,7 +71,7 @@ export default function Home() {
 
     try {
       // First check chain ID
-      let chainId = await window.ethereum.request({ method: 'eth_chainId' })
+      const chainId = await window.ethereum.request({ method: 'eth_chainId' })
       addLog(`Current chain ID: ${chainId}`)
 
       // If not on BSC, attempt to switch
