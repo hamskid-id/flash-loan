@@ -14,8 +14,8 @@ import { BSC_MAINNET_CONFIG } from '@/lib/bscConfig'
 declare global {
   interface Window {
     ethereum?: ethers.Eip1193Provider & {
-      on: (event: string, callback: (...args: any[]) => void) => void; /* eslint-disable @typescript-eslint/no-explicit-any */
-      removeListener: (event: string, callback: (...args: any[]) => void) => void; /* eslint-disable @typescript-eslint/no-explicit-any */
+      on: (event: string, callback: (...args: any[]) => void) => void; // eslint-disable-line @typescript-eslint/no-explicit-any
+      removeListener: (event: string, callback: (...args: any[]) => void) => void; // eslint-disable-line @typescript-eslint/no-explicit-any
     };
   }
   interface EthereumRpcError extends Error {
