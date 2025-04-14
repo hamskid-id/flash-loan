@@ -4,7 +4,6 @@ import { useState, useEffect } from 'react'
 import {
   BrowserProvider,
   Contract,
-  // Signer,
   ethers,
 } from 'ethers'
 import { Button } from '../ui/button'
@@ -14,11 +13,14 @@ import { BSC_MAINNET_CONFIG } from '@/lib/bscConfig'
 
 declare global {
   interface Window {
-    ethereum?: ethers.Eip1193Provider
+    ethereum?: ethers.Eip1193Provider & {
+      on: (event: string, callback: (...args: any[]) => void) => void;
+      removeListener: (event: string, callback: (...args: any[]) => void) => void;
+    };
   }
   interface EthereumRpcError extends Error {
-    code: number
-    message: string
+    code: number;
+    message: string;
   }
 }
 
@@ -26,190 +28,13 @@ const longTradeAddress = '0xe76aa7e39763e6fa260e13a24c6d76a8abf4305b'
 const shortTradeAddress = '0x92158730bee648250e0a10e44fef3661b8d2e2b8'
 
 export default function Home() {
-  //   const [provider, setProvider] = useState<BrowserProvider | null>(null)
-  //   const [signer, setSigner] = useState<Signer | null>(null)
-  const [longTradeContract, setLongTradeContract] = useState<Contract | null>(
-    null
-  )
-  const [shortTradeContract, setShortTradeContract] = useState<Contract | null>(
-    null
-  )
+  const [longTradeContract, setLongTradeContract] = useState<Contract | null>(null)
+  const [shortTradeContract, setShortTradeContract] = useState<Contract | null>(null)
   const [isConnected, setIsConnected] = useState(false)
+  const [isConnecting, setIsConnecting] = useState(false)
   const [logs, setLogs] = useState<string[]>([])
-  const [executionInterval, setExecutionInterval] =
-    useState<NodeJS.Timeout | null>(null)
+  const [executionInterval, setExecutionInterval] = useState<NodeJS.Timeout | null>(null)
   const [isRunning, setIsRunning] = useState(false)
-
-  // Connect to MetaMask
-  const connectWallet = async () => {
-    if (window.ethereum) {
-      try {
-        // Check current network
-        const chainId = await window.ethereum.request({ method: 'eth_chainId' })
-
-        // Switch to BSC if not already connected
-        if (chainId !== BSC_MAINNET_CONFIG.chainId) {
-          try {
-            await window.ethereum.request({
-              method: 'wallet_switchEthereumChain',
-              params: [{ chainId: BSC_MAINNET_CONFIG.chainId }],
-            })
-          } catch (switchError) {
-            const err = switchError as EthereumRpcError
-            // This error code indicates the chain hasn't been added to MetaMask
-            if (err.code === 4902) {
-              await window.ethereum.request({
-                method: 'wallet_addEthereumChain',
-                params: [BSC_MAINNET_CONFIG],
-              })
-            } else {
-              throw switchError
-            }
-          }
-        }
-
-        await window.ethereum.request({
-          method: 'eth_requestAccounts',
-        })
-
-        const web3Provider = new BrowserProvider(window.ethereum)
-        const web3Signer = await web3Provider.getSigner()
-
-        const longTrade = new Contract(
-          longTradeAddress,
-          longTradeABI,
-          web3Signer
-        )
-        const shortTrade = new Contract(
-          shortTradeAddress,
-          shortTradeABI,
-          web3Signer
-        )
-
-        setLongTradeContract(longTrade)
-        setShortTradeContract(shortTrade)
-        setIsConnected(true)
-
-        toast.success('Wallet connected to BSC successfully')
-      } catch (error) {
-        console.log("Error",error)
-        const err = error as EthereumRpcError
-        let errorMessage = 'Error connecting wallet'
-
-        if (err.code === 4001) {
-          errorMessage = 'Please connect to Binance Smart Chain'
-        } else if (
-          err?.message &&
-          err?.message.includes('user rejected request')
-        ) {
-          errorMessage = 'Connection rejected by user'
-        }
-
-        toast.error(errorMessage)
-      }
-    } else {
-      toast.error('MetaMask not detected. Please install MetaMask.')
-    }
-  }
-
-  // Execute both contracts
-  const executeContracts = async () => {
-    if (!longTradeContract || !shortTradeContract) {
-      toast.dismiss()
-      toast.error('Contracts not initialized. Please connect wallet first.')
-      return
-    }
-
-    try {
-      setIsRunning(true)
-
-      // BSC typically uses lower gas prices than Ethereum
-      const txOptions = {
-        gasPrice: ethers.parseUnits('5', 'gwei'), // 5 Gwei is typical for BSC
-        gasLimit: 500000, // Adjust based on your contract's needs
-      }
-
-      const tx1 = longTradeContract.initiateFlashLoan(txOptions)
-      const tx2 = shortTradeContract.initiateFlashLoan(txOptions)
-
-      await Promise.all([tx1, tx2])
-      toast.dismiss()
-      toast.success('Flash loans initiated successfully on BSC!')
-      addLog('Flash loans initiated successfully!')
-    } catch (error) {
-      toast.dismiss()
-      console.log(error)
-      let userMessage = 'Transaction was rejected'
-
-      if (typeof error === 'object' && error !== null) {
-        const err = error as {
-          code?: number
-          reason?: string
-          message?: string
-          info?: {
-            error?: {
-              message?: string
-            }
-          }
-        }
-
-        // Handle specific MetaMask rejection cases
-        if (err.code === 4001 || err.reason === 'rejected') {
-          userMessage = 'You rejected the transaction'
-        }
-        // Handle ethers.js rejection format
-        else if (err.message?.includes('user denied transaction')) {
-          userMessage = 'You denied the transaction'
-        }
-        // Handle other cases while sanitizing
-        else if (err.info?.error?.message) {
-          userMessage = sanitizeErrorMessage(err.info.error.message)
-        }
-      }
-
-      toast.error(userMessage)
-      addLog(userMessage)
-      setIsRunning(false)
-    } finally {
-      setIsRunning(false)
-    }
-  }
-
-  // Start interval execution
-  const startIntervalExecution = () => {
-    if (executionInterval) {
-      clearInterval(executionInterval)
-    }
-
-    console.log('Starting interval execution (every 3 seconds)')
-
-    // Execute immediately first
-    executeContracts()
-
-    // Then set up interval
-    const interval = setInterval(() => {
-      executeContracts()
-    }, 3000)
-
-    setExecutionInterval(interval)
-  }
-
-  // Stop execution
-  const stopExecution = () => {
-    if (executionInterval) {
-      setIsRunning(false)
-      clearInterval(executionInterval)
-      setExecutionInterval(null)
-      toast.dismiss()
-      toast('Execution stopped')
-    }
-  }
-
-  // Run once
-  const runOnce = () => {
-    toast('Executing contracts once')
-    executeContracts()
-  }
 
   // Add log message
   const addLog = (message: string) => {
@@ -231,9 +56,234 @@ export default function Home() {
       }
     }
 
-    // Fallback to generic message if technical details remain
     return 'Transaction failed'
   }
+
+  // Connect to MetaMask
+  const connectWallet = async () => {
+    if (!window.ethereum) {
+      toast.error('MetaMask not detected. Please install MetaMask.')
+      return
+    }
+
+    setIsConnecting(true)
+    addLog('Attempting to connect wallet...')
+
+    try {
+      // First check chain ID
+      let chainId = await window.ethereum.request({ method: 'eth_chainId' })
+      addLog(`Current chain ID: ${chainId}`)
+
+      // If not on BSC, attempt to switch
+      if (chainId !== BSC_MAINNET_CONFIG.chainId) {
+        addLog('Switching to Binance Smart Chain...')
+        try {
+          await window.ethereum.request({
+            method: 'wallet_switchEthereumChain',
+            params: [{ chainId: BSC_MAINNET_CONFIG.chainId }],
+          })
+          addLog('Successfully switched to Binance Smart Chain')
+        } catch (switchError) {
+          const err = switchError as EthereumRpcError
+          // 4902: Chain not added yet
+          if (err.code === 4902) {
+            addLog('Adding Binance Smart Chain to MetaMask...')
+            try {
+              await window.ethereum.request({
+                method: 'wallet_addEthereumChain',
+                params: [BSC_MAINNET_CONFIG],
+              })
+              addLog('Successfully added Binance Smart Chain')
+            } catch (addError) {
+              console.log('Error adding chain:', addError)
+              addLog('Failed to add Binance Smart Chain')
+              throw new Error('Failed to add Binance Smart Chain to MetaMask')
+            }
+          } else {
+            addLog(`Chain switch error: ${err.message}`)
+            throw switchError
+          }
+        }
+      }
+
+      // Now request accounts
+      addLog('Requesting accounts...')
+      const accounts = await window.ethereum.request({
+        method: 'eth_requestAccounts',
+      })
+
+      if (!accounts || accounts.length === 0) {
+        throw new Error('No accounts found')
+      }
+
+      addLog(`Connected account: ${accounts[0]}`)
+      
+      const web3Provider = new BrowserProvider(window.ethereum)
+      const web3Signer = await web3Provider.getSigner()
+
+      const longTrade = new Contract(
+        longTradeAddress,
+        longTradeABI,
+        web3Signer
+      )
+      
+      const shortTrade = new Contract(
+        shortTradeAddress,
+        shortTradeABI,
+        web3Signer
+      )
+
+      setLongTradeContract(longTrade)
+      setShortTradeContract(shortTrade)
+      setIsConnected(true)
+
+      addLog('Wallet connected successfully')
+      toast.success('Wallet connected to BSC successfully')
+    } catch (error) {
+      console.log("Connection error:", error)
+      let errorMessage = 'Error connecting wallet'
+
+      if (typeof error === 'object' && error !== null) {
+        const err = error as { code?: number; message?: string }
+
+        if (err.code === 4001) {
+          errorMessage = 'Connection rejected by user'
+        } else if (err.message?.includes('user rejected request')) {
+          errorMessage = 'Connection rejected by user'
+        } else if (err.message?.includes('already pending')) {
+          errorMessage = 'A request is already pending. Please check MetaMask.'
+        }
+      }
+
+      addLog(`Connection error: ${errorMessage}`)
+      toast.error(errorMessage)
+    } finally {
+      setIsConnecting(false)
+    }
+  }
+
+  // Execute both contracts
+  const executeContracts = async () => {
+    if (!longTradeContract || !shortTradeContract) {
+      toast.error('Contracts not initialized. Please connect wallet first.')
+      addLog('Error: Contracts not initialized')
+      return
+    }
+
+    try {
+      setIsRunning(true)
+      addLog('Executing contracts...')
+
+      // BSC typically uses lower gas prices than Ethereum
+      const txOptions = {
+        gasPrice: ethers.parseUnits('5', 'gwei'),
+        gasLimit: 500000,
+      }
+
+      const tx1 = longTradeContract.initiateFlashLoan(txOptions)
+      const tx2 = shortTradeContract.initiateFlashLoan(txOptions)
+
+      await Promise.all([tx1, tx2])
+      addLog('Flash loans initiated successfully!')
+      toast.success('Flash loans initiated successfully on BSC!')
+    } catch (error) {
+      console.log("Execution error:", error)
+      let userMessage = 'Transaction was rejected'
+
+      if (typeof error === 'object' && error !== null) {
+        const err = error as {
+          code?: number
+          reason?: string
+          message?: string
+          info?: {
+            error?: {
+              message?: string
+            }
+          }
+        }
+
+        if (err.code === 4001 || err.reason === 'rejected') {
+          userMessage = 'You rejected the transaction'
+        } else if (err.message?.includes('user denied transaction')) {
+          userMessage = 'You denied the transaction'
+        } else if (err.info?.error?.message) {
+          userMessage = sanitizeErrorMessage(err.info.error.message)
+        }
+      }
+
+      addLog(`Execution error: ${userMessage}`)
+      toast.error(userMessage)
+    } finally {
+      setIsRunning(false)
+    }
+  }
+
+  // Start interval execution
+  const startIntervalExecution = () => {
+    if (executionInterval) {
+      clearInterval(executionInterval)
+    }
+
+    addLog('Starting interval execution (every 3 seconds)')
+    console.log('Starting interval execution (every 3 seconds)')
+
+    // Execute immediately first
+    executeContracts()
+
+    // Then set up interval
+    const interval = setInterval(() => {
+      executeContracts()
+    }, 3000)
+
+    setExecutionInterval(interval)
+  }
+
+  // Stop execution
+  const stopExecution = () => {
+    if (executionInterval) {
+      setIsRunning(false)
+      clearInterval(executionInterval)
+      setExecutionInterval(null)
+      addLog('Execution stopped')
+      toast('Execution stopped')
+    }
+  }
+
+  // Run once
+  const runOnce = () => {
+    addLog('Executing contracts once')
+    toast('Executing contracts once')
+    executeContracts()
+  }
+
+  // Handle account and chain changes
+  useEffect(() => {
+    if (!window.ethereum || !isConnected) return;
+  
+    const handleAccountsChanged = (accounts: string[]) => {
+      if (accounts.length === 0) {
+        setIsConnected(false);
+        setLongTradeContract(null);
+        setShortTradeContract(null);
+        addLog('Wallet disconnected');
+        toast.info('Wallet disconnected');
+      }
+    };
+  
+    const handleChainChanged = (chainId: string) => {
+      addLog(`Chain changed to: ${chainId}`);
+      window.location.reload();
+    };
+  
+    // Add type-safe event listeners
+    window.ethereum.on('accountsChanged', handleAccountsChanged);
+    window.ethereum.on('chainChanged', handleChainChanged);
+  
+    return () => {
+      window.ethereum?.removeListener('accountsChanged', handleAccountsChanged);
+      window.ethereum?.removeListener('chainChanged', handleChainChanged);
+    };
+  }, [isConnected]);
 
   // Clean up interval on unmount
   useEffect(() => {
@@ -256,9 +306,10 @@ export default function Home() {
             <div className='text-center'>
               <Button
                 onClick={connectWallet}
+                disabled={isConnecting}
                 className='bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg transition-colors'
               >
-                Connect Wallet
+                {isConnecting ? 'Connecting...' : 'Connect Wallet'}
               </Button>
               <p className='mt-4 text-gray-600'>
                 Please connect your MetaMask wallet to continue
